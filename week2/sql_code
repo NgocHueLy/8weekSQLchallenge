@@ -1,0 +1,231 @@
+
+-- ****************** update table ************************--
+
+select * from pizza_runner.customer_orders;
+
+update pizza_runner.customer_orders
+set exclusions = null
+where exclusions = 'null';
+
+
+update pizza_runner.customer_orders
+set extras = null
+where extras = '';
+
+select * from pizza_runner.pizza_names;
+
+select * from pizza_runner.pizza_recipes;
+
+select * from pizza_runner.runner_orders;
+
+update pizza_runner.runner_orders
+set pickup_time = null
+where pickup_time ='null';
+
+alter table pizza_runner.runner_orders
+alter column pickup_time type timestamp
+using pickup_time::timestamp;
+
+
+update pizza_runner.runner_orders
+set distance = null
+where distance ='null';
+
+
+update pizza_runner.runner_orders
+set distance = replace(distance,'km','');
+update pizza_runner.runner_orders
+set distance = replace(distance,' ','');
+
+
+alter table pizza_runner.runner_orders
+alter column distance type double precision
+using distance::double precision;
+
+
+update pizza_runner.runner_orders
+set duration = null
+where duration = 'null';
+
+update pizza_runner.runner_orders
+set duration = left (duration,2);
+
+alter table pizza_runner.runner_orders
+alter column duration type integer
+using duration::integer;
+
+alter table pizza_runner.runner_orders
+alter column distance type integer
+using distance::integer;
+
+
+alter table pizza_runner.runner_orders
+alter column distance type double precision
+using distance::double precision;
+
+
+select * from pizza_runner.runner_orders;
+update pizza_runner.runner_orders
+set cancellation = null
+where cancellation ='' or cancellation = 'null';
+
+select * from pizza_runner.runner_orders;
+
+select * from pizza_runner.runners;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------
+
+--  A. Pizza Metrics
+
+-- 1. How many pizzas were ordered?
+
+select count (pizza_id) as number_of_ordered_pizzas
+from pizza_runner.customer_orders;
+
+-- 2.How many unique customer orders were made?
+select count (distinct order_id) as no_of_unique_orders
+from pizza_runner.customer_orders;
+
+-- 3. How many successful orders were delivered by each runner?
+select runner_id, count (order_id) successfull_orders
+from pizza_runner.runner_orders
+where cancellation is null
+group by 1;
+
+-- 4. How many of each type of pizza was delivered?
+select p.pizza_name, count (c.order_id) numbers_of_order
+from pizza_runner.pizza_names p JOIN pizza_runner.customer_orders  c
+ON p.pizza_id = c.pizza_id
+JOIN pizza_runner.runner_orders r
+ON c.order_id = r.order_id
+where r.cancellation is null
+group by 1
+
+-- 5. How many Vegetarian and Meatlovers were ordered by each customer?
+select meat.customer_id, meatlovers, vegetarian
+from
+	(select customer_id, count (pizza_name) as Meatlovers
+	from pizza_runner.customer_orders c
+	join pizza_runner.pizza_names p
+	on c.pizza_id = p.pizza_id
+	where pizza_name = 'Meatlovers'
+	group by 1) meat
+JOIN
+	(select customer_id, count (pizza_name) as Vegetarian
+	from pizza_runner.customer_orders c
+	join pizza_runner.pizza_names p
+	on c.pizza_id = p.pizza_id
+	where pizza_name = 'Vegetarian'
+		group by 1) vegan
+ON meat.customer_id = vegan.customer_id
+
+-- 6.What was the maximum number of pizzas delivered in a single order?
+select no_of_pizza as maximum_number_of_pizzas
+from 
+	(select distinct c.order_id, count (pizza_id) no_of_pizza
+	from pizza_runner.runner_orders r
+	join pizza_runner.customer_orders c
+	on r.order_id = c.order_id
+	where cancellation is null
+	group by 1
+	order by 2 desc
+	limit 1) x
+	
+/*For each customer, how many delivered pizzas 
+had at least 1 change and how many had no changes? */
+select case when nch.customer_id is null and ch.customer_id is null
+			then cast (concat(nch.customer_id, ch.customer_id) as integer) -- change concat to integer because the results of other conditions are integer
+			when nch.customer_id is not null then nch.customer_id
+			else ch.customer_id 
+			end as customer, --use case to combine full join result because of null value in customer_id columns
+			coalesce (no_change_count,0) as no_change,
+			coalesce (change_count,0) as change
+from
+	(select customer_id, count(pizza_id) as no_change_count
+	from pizza_runner.customer_orders
+	where exclusions is null and extras is null
+	group by 1) as nch
+	full outer join
+	(select customer_id, count(pizza_id) as change_count
+	from pizza_runner.customer_orders
+	where exclusions is not null or extras is not null
+	group by 1) as ch
+	on nch.customer_id = ch.customer_id
+
+-- 7. How many pizzas were delivered that had both exclusions and extras?
+select count(*)
+from pizza_runner.runner_orders r join pizza_runner.customer_orders c
+on r.order_id = c.order_id
+where exclusions is not null and extras is not null and cancellation is null
+
+-- 8.What was the total volume of pizzas ordered for each hour of the day?
+select distinct (extract (hour from order_time)) hour_of_day,count(order_id) number_of_orders
+from pizza_runner.customer_orders
+group by 1
+order by 2 desc
+
+-- 9. What was the volume of orders for each day of the week?
+select distinct to_char (order_time,'Day') day_of_week ,count(order_id) number_of_orders
+from pizza_runner.customer_orders
+group by 1
+order by 2 desc;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- B. Runner and Customer Experience
+-- How many runners signed up for each 1 week period? (i.e. week starts 2021-01-01)
+select to_char(registration_date,'WW'),count (*) as number_runner_sign_up
+from pizza_runner.runners
+group by 1
+order by 1
+
+/*What was the average time in minutes it took for each runner 
+to arrive at the Pizza Runner HQ to pickup the order? */
+
+select avg(distinct (pickup_time - order_time))::time as average_time
+from pizza_runner.runner_orders r
+join pizza_runner.customer_orders c
+on r.order_id = c.order_id;
+
+/*Is there any relationship between the number 
+of pizzas and how long the order takes to prepare? */
+select distinct number_of_pizza, avg (prepare_time) as avg_prepare_time
+from
+	(select c.order_id, count (*) as number_of_pizza, to_char(pickup_time - order_time,'HH24:MI:SS')::time as prepare_time
+	from pizza_runner.customer_orders c 
+	join pizza_runner.runner_orders r
+	on c.order_id = r.order_id
+	where cancellation is null
+	group by 1,3) x
+group by 1
+
+/*What was the average distance travelled for each customer?*/
+select customer_id, avg(distance) as average_distance_travelled
+from pizza_runner.customer_orders c 
+join pizza_runner.runner_orders r
+on c.order_id = r.order_id
+group by 1
+
+-- What was the difference between the longest and shortest delivery times for all orders?
+select (max(duration) - min(duration)) || ' minutes'  as deliverty_time_difference
+from pizza_runner.runner_orders 
+
+/*What was the average speed for each runner for
+each delivery and do you notice any trend for these values?*/
+
+select order_id,runner_id, distance, duration, (distance/duration::double precision)*60 as avg_speed_kmh
+from pizza_runner.runner_orders
+order by 2,1
+--the runners seem to have increased speed from order to order, but not correlate to distance
+
+/*What is the successful delivery percentage for each runner?*/
+select total.runner_id, success_count::double precision/total_count*100 as successful_delivery_percentage
+from
+	(select distinct runner_id, count(*) as total_count
+	from pizza_runner.runner_orders
+	group by 1) total
+join
+	(select distinct runner_id, count(*) as success_count
+	from pizza_runner.runner_orders
+	where cancellation is null
+	group by 1) success
+on total.runner_id = success.runner_id
